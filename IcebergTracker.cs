@@ -115,7 +115,7 @@ public class IcebergTracker
         // Price-level: check if a mostly-consumed order was recently deleted at this price
         if (_recentDeletes.TryGetValue(mbo.Price, out var del)
             && del.Side == side
-            && (DateTime.Now - del.DeleteTime).TotalSeconds < 2
+            && (DateTime.Now - del.DeleteTime).TotalSeconds < 10
             && mbo.Volume >= del.DisplaySize * 0.70m
             && mbo.Volume <= del.DisplaySize * 1.30m)
         {
@@ -271,11 +271,19 @@ public class IcebergTracker
             RebuildSnapshot();
 
         var staleDeletes = _recentDeletes
-            .Where(kvp => (DateTime.Now - kvp.Value.DeleteTime).TotalSeconds > 10)
+            .Where(kvp => (DateTime.Now - kvp.Value.DeleteTime).TotalSeconds > 30)
             .Select(kvp => kvp.Key)
             .ToList();
         foreach (var key in staleDeletes)
             _recentDeletes.TryRemove(key, out _);
+
+        // Purge snapshot orders that were never deleted (sitting idle > 10 min)
+        var staleOrders = _activeOrders
+            .Where(kvp => (DateTime.Now - kvp.Value.LastSeen).TotalMinutes > 10)
+            .Select(kvp => kvp.Key)
+            .ToList();
+        foreach (var key in staleOrders)
+            _activeOrders.TryRemove(key, out _);
 
         var staleLevels = _priceLevels
             .Where(kvp => (DateTime.Now - kvp.Value.LastSeen).TotalMinutes > expiryMinutes)
