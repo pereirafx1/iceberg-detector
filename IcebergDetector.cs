@@ -152,7 +152,6 @@ public class IcebergDetector : Indicator
         {
             if (iceberg.Side == 0 && !ShowBuyIcebergs) continue;
             if (iceberg.Side == 1 && !ShowSellIcebergs) continue;
-            if (_currentPrice > 0 && _tracker.MaxDistance > 0 && Math.Abs(iceberg.Price - _currentPrice) > _tracker.MaxDistance) continue;
 
             var color = iceberg.Side == 0 ? BuyColor : SellColor;
             var borderColor = Color.FromArgb(255, color.R, color.G, color.B);
