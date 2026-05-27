@@ -18,6 +18,7 @@ public class IcebergDetector : Indicator
     private IcebergTracker _tracker = null!;
     private bool _mboAvailable = false;
     private DateTime _lastDiagLog = DateTime.MinValue;
+    private decimal _currentPrice;
 
     public IcebergDetector()
     {
@@ -57,6 +58,10 @@ public class IcebergDetector : Indicator
     [Display(Name = "Event Expiry (minutes)", GroupName = "Detection", Order = 3)]
     [Range(1, 120)]
     public int ExpiryMinutes { get; set; } = 10;
+
+    [Display(Name = "Max Distance (points)", GroupName = "Detection", Order = 4)]
+    [Range(1, 100)]
+    public int MaxDistancePoints { get; set; } = 15;
 
     // --- Display ---
 
@@ -121,6 +126,8 @@ public class IcebergDetector : Indicator
     {
         if (bar == CurrentBar - 1)
         {
+            _currentPrice = value;
+            _tracker.CurrentPrice = value;
             _tracker.Cleanup(ExpiryMinutes);
 
             if ((DateTime.Now - _lastDiagLog).TotalSeconds >= 30)
@@ -147,6 +154,7 @@ public class IcebergDetector : Indicator
         {
             if (iceberg.Side == 0 && !ShowBuyIcebergs) continue;
             if (iceberg.Side == 1 && !ShowSellIcebergs) continue;
+            if (_currentPrice > 0 && Math.Abs(iceberg.Price - _currentPrice) > MaxDistancePoints) continue;
 
             var color = iceberg.Side == 0 ? BuyColor : SellColor;
             var borderColor = Color.FromArgb(255, color.R, color.G, color.B);

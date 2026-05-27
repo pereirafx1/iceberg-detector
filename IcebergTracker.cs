@@ -67,6 +67,8 @@ public class IcebergTracker
         public string LastOrderId = "";
     }
 
+    public decimal CurrentPrice;
+
     public IcebergTracker(int minRefillCount, decimal minIcebergVolume)
     {
         _minRefillCount = minRefillCount;
@@ -76,6 +78,10 @@ public class IcebergTracker
     public bool ProcessMboUpdate(MarketByOrder mbo, int currentBar)
     {
         if (mbo.Side == MarketDataType.Trade || mbo.Price <= 0)
+            return false;
+
+        // Ignore events too far from current price (deep book orders, not icebergs)
+        if (CurrentPrice > 0 && Math.Abs(mbo.Price - CurrentPrice) > CurrentPrice * 0.005m)
             return false;
 
         switch (mbo.Type)
