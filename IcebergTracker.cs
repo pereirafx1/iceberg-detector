@@ -10,7 +10,8 @@ public class IcebergTracker
     private readonly decimal _minIcebergVolume;
 
     private readonly ConcurrentDictionary<string, OrderSnapshot> _activeOrders = new();
-    private readonly ConcurrentDictionary<string, (OrderSnapshot snap, DateTime at)> _recentlyDeleted = new();
+    private readonly ConcurrentDictionary<decimal, DeleteRecord> _recentDeletes = new();
+    private readonly ConcurrentDictionary<decimal, PriceLevelState> _priceLevels = new();
     private readonly ConcurrentDictionary<decimal, IcebergEvent> _confirmed = new();
 
     private List<IcebergEvent> _renderSnapshot = new();
@@ -18,7 +19,7 @@ public class IcebergTracker
 
     // Diagnostics
     public int DiagVolumeIncreasesSeen;
-    public int DiagSameIdDeleteNewSeen;
+    public int DiagPriceLevelRefillsSeen;
     public int DiagMaxRefillCount;
     public decimal DiagMaxTotalFilled;
 
@@ -28,11 +29,31 @@ public class IcebergTracker
         public int Side;
         public decimal DisplaySize;
         public decimal CurrentVolume;
-        public int RefillCount;
         public decimal TotalFilled;
         public DateTime FirstSeen;
         public DateTime LastSeen;
         public int BarIndex;
+    }
+
+    private class DeleteRecord
+    {
+        public int Side;
+        public decimal DisplaySize;
+        public decimal FilledAmount;
+        public DateTime DeleteTime;
+        public int BarIndex;
+    }
+
+    private class PriceLevelState
+    {
+        public int Side;
+        public decimal DisplaySize;
+        public int CycleCount;
+        public decimal TotalFilled;
+        public DateTime FirstSeen;
+        public DateTime LastSeen;
+        public int BarIndex;
+        public string LastOrderId = "";
     }
 
     public IcebergTracker(int minRefillCount, decimal minIcebergVolume)
@@ -62,39 +83,52 @@ public class IcebergTracker
         string orderId = mbo.ExchangeOrderId.ToString();
         int side = mbo.Side == MarketDataType.Bid ? 0 : 1;
 
-        // Pattern 2: Delete+New with same order ID (Rithmic iceberg slice continuation)
-        if (_recentlyDeleted.TryRemove(orderId, out var prev)
-            && (DateTime.Now - prev.at).TotalSeconds < 3
-            && prev.snap.Price == mbo.Price
-            && prev.snap.Side == side)
-        {
-            var snap = prev.snap;
-            snap.RefillCount++;
-            snap.DisplaySize = mbo.Volume;
-            snap.CurrentVolume = mbo.Volume;
-            snap.LastSeen = DateTime.Now;
-            snap.BarIndex = currentBar;
-            _activeOrders[orderId] = snap;
-
-            DiagSameIdDeleteNewSeen++;
-            if (snap.RefillCount > DiagMaxRefillCount) DiagMaxRefillCount = snap.RefillCount;
-            if (snap.TotalFilled > DiagMaxTotalFilled) DiagMaxTotalFilled = snap.TotalFilled;
-
-            return TryPromote(mbo.Price, orderId, snap);
-        }
-
         _activeOrders[orderId] = new OrderSnapshot
         {
             Price = mbo.Price,
             Side = side,
             DisplaySize = mbo.Volume,
             CurrentVolume = mbo.Volume,
-            RefillCount = 0,
             TotalFilled = 0m,
             FirstSeen = DateTime.Now,
             LastSeen = DateTime.Now,
             BarIndex = currentBar
         };
+
+        // Price-level: check if a mostly-consumed order was recently deleted at this price
+        if (_recentDeletes.TryGetValue(mbo.Price, out var del)
+            && del.Side == side
+            && (DateTime.Now - del.DeleteTime).TotalSeconds < 2
+            && mbo.Volume >= del.DisplaySize * 0.70m
+            && mbo.Volume <= del.DisplaySize * 1.30m)
+        {
+            _recentDeletes.TryRemove(mbo.Price, out _);
+
+            var lvl = _priceLevels.GetOrAdd(mbo.Price, _ => new PriceLevelState
+            {
+                Side = side,
+                DisplaySize = del.DisplaySize,
+                CycleCount = 0,
+                TotalFilled = 0m,
+                FirstSeen = del.DeleteTime,
+                LastSeen = DateTime.Now,
+                BarIndex = del.BarIndex
+            });
+
+            lvl.CycleCount++;
+            lvl.TotalFilled += del.FilledAmount;
+            lvl.LastSeen = DateTime.Now;
+            lvl.BarIndex = currentBar;
+            lvl.DisplaySize = mbo.Volume;
+            lvl.LastOrderId = orderId;
+
+            DiagPriceLevelRefillsSeen++;
+            if (lvl.CycleCount > DiagMaxRefillCount) DiagMaxRefillCount = lvl.CycleCount;
+            if (lvl.TotalFilled > DiagMaxTotalFilled) DiagMaxTotalFilled = lvl.TotalFilled;
+
+            return TryPromotePriceLevel(mbo.Price, lvl);
+        }
+
         return false;
     }
 
@@ -107,8 +141,7 @@ public class IcebergTracker
 
         if (mbo.Volume > snapshot.CurrentVolume)
         {
-            // Pattern 1: volume increased = hidden reserve refilled displayed portion
-            snapshot.RefillCount++;
+            // Volume increase = hidden reserve refilled (rare on Rithmic but handle it)
             snapshot.DisplaySize = mbo.Volume;
             DiagVolumeIncreasesSeen++;
         }
@@ -123,10 +156,9 @@ public class IcebergTracker
         snapshot.LastSeen = DateTime.Now;
         snapshot.BarIndex = currentBar;
 
-        if (snapshot.RefillCount > DiagMaxRefillCount) DiagMaxRefillCount = snapshot.RefillCount;
         if (snapshot.TotalFilled > DiagMaxTotalFilled) DiagMaxTotalFilled = snapshot.TotalFilled;
 
-        return TryPromote(mbo.Price, orderId, snapshot);
+        return false;
     }
 
     private bool HandleDelete(MarketByOrder mbo)
@@ -135,39 +167,49 @@ public class IcebergTracker
 
         if (_activeOrders.TryRemove(orderId, out var snapshot))
         {
-            // Save mostly-consumed orders for potential same-ID Delete+New continuation
-            bool mostlyConsumed = snapshot.CurrentVolume <= snapshot.DisplaySize * 0.30m;
-            if (mostlyConsumed && snapshot.TotalFilled > 0)
-                _recentlyDeleted[orderId] = (snapshot, DateTime.Now);
+            // Record if order was significantly consumed — potential iceberg slice
+            bool significantlyFilled = snapshot.TotalFilled >= snapshot.DisplaySize * 0.40m;
+            if (significantlyFilled)
+            {
+                _recentDeletes[mbo.Price] = new DeleteRecord
+                {
+                    Side = snapshot.Side,
+                    DisplaySize = snapshot.DisplaySize,
+                    FilledAmount = snapshot.TotalFilled,
+                    DeleteTime = DateTime.Now,
+                    BarIndex = snapshot.BarIndex
+                };
+            }
         }
 
         if (_confirmed.TryGetValue(mbo.Price, out var iceberg) && iceberg.OrderId == orderId)
         {
             iceberg.IsActive = false;
+            _priceLevels.TryRemove(mbo.Price, out _);
             RebuildSnapshot();
         }
 
         return false;
     }
 
-    private bool TryPromote(decimal price, string orderId, OrderSnapshot snap)
+    private bool TryPromotePriceLevel(decimal price, PriceLevelState lvl)
     {
-        if (snap.RefillCount < _minRefillCount || snap.TotalFilled < _minIcebergVolume)
+        if (lvl.CycleCount < _minRefillCount || lvl.TotalFilled < _minIcebergVolume)
             return false;
 
         bool existed = _confirmed.ContainsKey(price);
         _confirmed[price] = new IcebergEvent
         {
-            OrderId = orderId,
-            Price = snap.Price,
-            Side = snap.Side,
-            TotalFilledVolume = snap.TotalFilled,
-            LastKnownDisplaySize = snap.DisplaySize,
-            RefillCount = snap.RefillCount,
-            FirstSeen = snap.FirstSeen,
-            LastSeen = snap.LastSeen,
+            OrderId = lvl.LastOrderId,
+            Price = price,
+            Side = lvl.Side,
+            TotalFilledVolume = lvl.TotalFilled,
+            LastKnownDisplaySize = lvl.DisplaySize,
+            RefillCount = lvl.CycleCount,
+            FirstSeen = lvl.FirstSeen,
+            LastSeen = lvl.LastSeen,
             IsActive = true,
-            BarIndex = snap.BarIndex
+            BarIndex = lvl.BarIndex
         };
         RebuildSnapshot();
         return !existed;
@@ -201,12 +243,18 @@ public class IcebergTracker
         if (expired.Count > 0)
             RebuildSnapshot();
 
-        var staleDeleted = _recentlyDeleted
-            .Where(kvp => (DateTime.Now - kvp.Value.at).TotalSeconds > 10)
+        var staleDeletes = _recentDeletes
+            .Where(kvp => (DateTime.Now - kvp.Value.DeleteTime).TotalSeconds > 10)
             .Select(kvp => kvp.Key)
             .ToList();
+        foreach (var key in staleDeletes)
+            _recentDeletes.TryRemove(key, out _);
 
-        foreach (var key in staleDeleted)
-            _recentlyDeleted.TryRemove(key, out _);
+        var staleLevels = _priceLevels
+            .Where(kvp => (DateTime.Now - kvp.Value.LastSeen).TotalMinutes > expiryMinutes)
+            .Select(kvp => kvp.Key)
+            .ToList();
+        foreach (var key in staleLevels)
+            _priceLevels.TryRemove(key, out _);
     }
 }
