@@ -38,6 +38,7 @@ public class IcebergDetector : Indicator
         set
         {
             _minRefillCount = value;
+            _tracker?.UpdateThresholds(value, _minIcebergVolume);
             RecalculateValues();
         }
     }
@@ -51,6 +52,7 @@ public class IcebergDetector : Indicator
         set
         {
             _minIcebergVolume = value;
+            _tracker?.UpdateThresholds(_minRefillCount, value);
             RecalculateValues();
         }
     }

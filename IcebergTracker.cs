@@ -6,8 +6,8 @@ namespace IcebergDetector;
 
 public class IcebergTracker
 {
-    private readonly int _minRefillCount;
-    private readonly decimal _minIcebergVolume;
+    private int _minRefillCount;
+    private decimal _minIcebergVolume;
 
     private readonly ConcurrentDictionary<string, OrderSnapshot> _activeOrders = new();
     private readonly ConcurrentDictionary<decimal, DeleteRecord> _recentDeletes = new();
@@ -71,6 +71,12 @@ public class IcebergTracker
     public decimal MaxDistance;
 
     public IcebergTracker(int minRefillCount, decimal minIcebergVolume)
+    {
+        _minRefillCount = minRefillCount;
+        _minIcebergVolume = minIcebergVolume;
+    }
+
+    public void UpdateThresholds(int minRefillCount, decimal minIcebergVolume)
     {
         _minRefillCount = minRefillCount;
         _minIcebergVolume = minIcebergVolume;
