@@ -126,7 +126,7 @@ public class IcebergDetector : Indicator
             if ((DateTime.Now - _lastDiagLog).TotalSeconds >= 30)
             {
                 _lastDiagLog = DateTime.Now;
-                this.LogWarn($"MBO | New={_tracker.DiagTotalNew} Change={_tracker.DiagTotalChange} Delete={_tracker.DiagTotalDelete} Active={_tracker.DiagActiveOrders} Orphan={_tracker.DiagDeletesOrphan} WithFills={_tracker.DiagDeletesWithFills} NoFills={_tracker.DiagDeletesNoFills} | Refills={_tracker.DiagPriceLevelRefillsSeen} MaxR={_tracker.DiagMaxRefillCount} MaxV={_tracker.DiagMaxTotalFilled:F0} | LastNewId={_tracker.DiagLastNewId} LastDelId={_tracker.DiagLastDeleteId}");
+                this.LogWarn($"MBO | New={_tracker.DiagTotalNew} Del={_tracker.DiagTotalDelete} Orphan={_tracker.DiagDeletesOrphan} NoFills={_tracker.DiagDeletesNoFills} RecentDel={_tracker.DiagRecentDeletes} | Refills={_tracker.DiagPriceLevelRefillsSeen} SizeRej={_tracker.DiagSizeRejected} MaxR={_tracker.DiagMaxRefillCount} MaxV={_tracker.DiagMaxTotalFilled:F0}");
             }
         }
     }

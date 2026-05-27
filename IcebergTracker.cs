@@ -28,7 +28,9 @@ public class IcebergTracker
     public int DiagDeletesWithFills;
     public int DiagDeletesNoFills;
     public int DiagDeletesOrphan;
+    public int DiagSizeRejected;
     public int DiagActiveOrders => _activeOrders.Count;
+    public int DiagRecentDeletes => _recentDeletes.Count;
     public string DiagLastNewId = "";
     public string DiagLastDeleteId = "";
 
@@ -115,10 +117,10 @@ public class IcebergTracker
         // Price-level: check if a mostly-consumed order was recently deleted at this price
         if (_recentDeletes.TryGetValue(mbo.Price, out var del)
             && del.Side == side
-            && (DateTime.Now - del.DeleteTime).TotalSeconds < 10
-            && mbo.Volume >= del.DisplaySize * 0.70m
-            && mbo.Volume <= del.DisplaySize * 1.30m)
+            && (DateTime.Now - del.DeleteTime).TotalSeconds < 10)
         {
+            bool sizeOk = mbo.Volume >= del.DisplaySize * 0.70m && mbo.Volume <= del.DisplaySize * 1.30m;
+            if (!sizeOk) DiagSizeRejected++;
             _recentDeletes.TryRemove(mbo.Price, out _);
 
             var lvl = _priceLevels.GetOrAdd(mbo.Price, _ => new PriceLevelState
