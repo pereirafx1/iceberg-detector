@@ -119,7 +119,7 @@ public class IcebergDetector : Indicator
     protected override void OnCalculate(int bar, decimal value)
     {
         if (bar == 0)
-            this.LogWarn($"MBO feed | New={_tracker.DiagTotalNew} Change={_tracker.DiagTotalChange} Delete={_tracker.DiagTotalDelete} | DeletesWithFills={_tracker.DiagDeletesWithFills} DeletesNoFills={_tracker.DiagDeletesNoFills} | PriceLevelRefills={_tracker.DiagPriceLevelRefillsSeen} MaxRefills={_tracker.DiagMaxRefillCount} MaxVol={_tracker.DiagMaxTotalFilled:F0}");
+            this.LogWarn($"MBO | New={_tracker.DiagTotalNew} Change={_tracker.DiagTotalChange} Delete={_tracker.DiagTotalDelete} Active={_tracker.DiagActiveOrders} Orphan={_tracker.DiagDeletesOrphan} WithFills={_tracker.DiagDeletesWithFills} NoFills={_tracker.DiagDeletesNoFills} | Refills={_tracker.DiagPriceLevelRefillsSeen} MaxR={_tracker.DiagMaxRefillCount} MaxV={_tracker.DiagMaxTotalFilled:F0} | LastNewId={_tracker.DiagLastNewId} LastDelId={_tracker.DiagLastDeleteId}");
         if (bar == CurrentBar - 1)
             _tracker.Cleanup(ExpiryMinutes);
     }

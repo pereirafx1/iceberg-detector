@@ -27,6 +27,10 @@ public class IcebergTracker
     public int DiagTotalDelete;
     public int DiagDeletesWithFills;
     public int DiagDeletesNoFills;
+    public int DiagDeletesOrphan;
+    public int DiagActiveOrders => _activeOrders.Count;
+    public string DiagLastNewId = "";
+    public string DiagLastDeleteId = "";
 
     private class OrderSnapshot
     {
@@ -95,6 +99,7 @@ public class IcebergTracker
         string orderId = mbo.ExchangeOrderId.ToString();
         int side = mbo.Side == MarketDataType.Bid ? 0 : 1;
 
+        DiagLastNewId = orderId;
         _activeOrders[orderId] = new OrderSnapshot
         {
             Price = mbo.Price,
@@ -177,11 +182,10 @@ public class IcebergTracker
     {
         string orderId = mbo.ExchangeOrderId.ToString();
 
+        DiagLastDeleteId = orderId;
         if (_activeOrders.TryRemove(orderId, out var snapshot))
         {
-            // Record if order was significantly consumed — potential iceberg slice
             bool significantlyFilled = snapshot.TotalFilled >= snapshot.DisplaySize * 0.40m;
-            // If no fills tracked but order existed, assume fully consumed (Rithmic may skip Change events)
             decimal effectiveFill = snapshot.TotalFilled > 0 ? snapshot.TotalFilled : snapshot.DisplaySize;
             bool recordable = significantlyFilled || snapshot.TotalFilled == 0;
 
@@ -199,6 +203,10 @@ public class IcebergTracker
                     BarIndex = snapshot.BarIndex
                 };
             }
+        }
+        else
+        {
+            DiagDeletesOrphan++;
         }
 
         if (_confirmed.TryGetValue(mbo.Price, out var iceberg) && iceberg.OrderId == orderId)
