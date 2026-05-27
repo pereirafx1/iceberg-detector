@@ -13,7 +13,7 @@ namespace IcebergDetector;
 [DisplayName("Iceberg Detector")]
 [Category("Order Flow")]
 [Description("Detects hidden iceberg orders in real-time using MBO data feed (requires Rithmic)")]
-public class IcebergDetector : ExtendedIndicator
+public class IcebergDetector : Indicator
 {
     private IcebergTracker _tracker = null!;
     private bool _mboAvailable = false;
