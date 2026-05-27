@@ -89,11 +89,11 @@ public class IcebergDetector : ExtendedIndicator
     [Display(Name = "Alert on New Iceberg", GroupName = "Alerts", Order = 20)]
     public bool AlertOnDetection { get; set; } = false;
 
-    protected override async Task OnInitialize()
+    protected override void OnInitialize()
     {
         _tracker = new IcebergTracker(MinRefillCount, MinIcebergVolume);
 
-        _mboManager = await SubscribeMarketByOrderData();
+        _mboManager = SubscribeMarketByOrderData();
         if (_mboManager != null)
         {
             _mboAvailable = true;
