@@ -22,6 +22,11 @@ public class IcebergTracker
     public int DiagPriceLevelRefillsSeen;
     public int DiagMaxRefillCount;
     public decimal DiagMaxTotalFilled;
+    public int DiagTotalNew;
+    public int DiagTotalChange;
+    public int DiagTotalDelete;
+    public int DiagDeletesWithFills;
+    public int DiagDeletesNoFills;
 
     private class OrderSnapshot
     {
@@ -67,13 +72,20 @@ public class IcebergTracker
         if (mbo.Side == MarketDataType.Trade || mbo.Price <= 0)
             return false;
 
-        return mbo.Type switch
+        switch (mbo.Type)
         {
-            MarketByOrderUpdateTypes.New or MarketByOrderUpdateTypes.Snapshot => HandleNew(mbo, currentBar),
-            MarketByOrderUpdateTypes.Change => HandleChange(mbo, currentBar),
-            MarketByOrderUpdateTypes.Delete => HandleDelete(mbo),
-            _ => false
-        };
+            case MarketByOrderUpdateTypes.New:
+            case MarketByOrderUpdateTypes.Snapshot:
+                DiagTotalNew++;
+                return HandleNew(mbo, currentBar);
+            case MarketByOrderUpdateTypes.Change:
+                DiagTotalChange++;
+                return HandleChange(mbo, currentBar);
+            case MarketByOrderUpdateTypes.Delete:
+                DiagTotalDelete++;
+                return HandleDelete(mbo);
+        }
+        return false;
     }
 
     private bool HandleNew(MarketByOrder mbo, int currentBar)
@@ -169,13 +181,20 @@ public class IcebergTracker
         {
             // Record if order was significantly consumed — potential iceberg slice
             bool significantlyFilled = snapshot.TotalFilled >= snapshot.DisplaySize * 0.40m;
-            if (significantlyFilled)
+            // If no fills tracked but order existed, assume fully consumed (Rithmic may skip Change events)
+            decimal effectiveFill = snapshot.TotalFilled > 0 ? snapshot.TotalFilled : snapshot.DisplaySize;
+            bool recordable = significantlyFilled || snapshot.TotalFilled == 0;
+
+            if (significantlyFilled) DiagDeletesWithFills++;
+            else if (snapshot.TotalFilled == 0) DiagDeletesNoFills++;
+
+            if (recordable && effectiveFill > 0)
             {
                 _recentDeletes[mbo.Price] = new DeleteRecord
                 {
                     Side = snapshot.Side,
                     DisplaySize = snapshot.DisplaySize,
-                    FilledAmount = snapshot.TotalFilled,
+                    FilledAmount = effectiveFill,
                     DeleteTime = DateTime.Now,
                     BarIndex = snapshot.BarIndex
                 };
