@@ -11,6 +11,17 @@ public class IcebergTracker
 
     private readonly ConcurrentDictionary<string, OrderSnapshot> _activeOrders = new();
     private readonly ConcurrentDictionary<decimal, IcebergEvent> _confirmed = new();
+    private readonly ConcurrentDictionary<decimal, PriceLevelCycles> _priceCycles = new();
+
+    private class PriceLevelCycles
+    {
+        public int Side;
+        public int CycleCount;
+        public decimal TotalFilled;
+        public decimal LastDisplaySize;
+        public DateTime LastSeen;
+        public int BarIndex;
+    }
 
     private List<IcebergEvent> _renderSnapshot = new();
     private readonly object _snapshotLock = new();
@@ -44,7 +55,7 @@ public class IcebergTracker
         {
             case MarketByOrderUpdateTypes.New:
             case MarketByOrderUpdateTypes.Snapshot:
-                HandleNew(mbo, currentBar);
+                newIcebergConfirmed = HandleNew(mbo, currentBar);
                 break;
 
             case MarketByOrderUpdateTypes.Change:
@@ -59,12 +70,14 @@ public class IcebergTracker
         return newIcebergConfirmed;
     }
 
-    private void HandleNew(MarketByOrder mbo, int currentBar)
+    private bool HandleNew(MarketByOrder mbo, int currentBar)
     {
+        int side = mbo.Side == MarketDataType.Bid ? 0 : 1;
+
         var snapshot = new OrderSnapshot
         {
             Price = mbo.Price,
-            Side = mbo.Side == MarketDataType.Bid ? 0 : 1,
+            Side = side,
             OriginalVolume = mbo.Volume,
             CurrentVolume = mbo.Volume,
             LastKnownDisplaySize = mbo.Volume,
@@ -76,6 +89,43 @@ public class IcebergTracker
         };
 
         _activeOrders[mbo.ExchangeOrderId.ToString()] = snapshot;
+
+        // Price-level: check if a previous order at same price was recently deleted (Delete+New cycle)
+        if (_priceCycles.TryGetValue(mbo.Price, out var cycle) && cycle.Side == side
+            && (DateTime.Now - cycle.LastSeen).TotalSeconds < 5)
+        {
+            cycle.CycleCount++;
+            cycle.LastDisplaySize = mbo.Volume;
+            cycle.LastSeen = DateTime.Now;
+            cycle.BarIndex = currentBar;
+            return CheckPriceLevelPromotion(mbo.Price, cycle, mbo.ExchangeOrderId.ToString());
+        }
+
+        return false;
+    }
+
+    private bool CheckPriceLevelPromotion(decimal price, PriceLevelCycles cycle, string orderId)
+    {
+        if (cycle.CycleCount >= _minRefillCount && cycle.TotalFilled >= _minIcebergVolume)
+        {
+            bool existed = _confirmed.ContainsKey(price);
+            _confirmed[price] = new IcebergEvent
+            {
+                OrderId = orderId,
+                Price = price,
+                Side = cycle.Side,
+                TotalFilledVolume = cycle.TotalFilled,
+                LastKnownDisplaySize = cycle.LastDisplaySize,
+                RefillCount = cycle.CycleCount,
+                FirstSeen = cycle.LastSeen,
+                LastSeen = cycle.LastSeen,
+                IsActive = true,
+                BarIndex = cycle.BarIndex
+            };
+            RebuildSnapshot();
+            return !existed;
+        }
+        return false;
     }
 
     private bool HandleChange(MarketByOrder mbo, int currentBar)
@@ -85,18 +135,19 @@ public class IcebergTracker
         if (!_activeOrders.TryGetValue(orderId, out var snapshot))
             return false;
 
-        decimal filled = snapshot.CurrentVolume - mbo.Volume;
-
-        if (filled > 0)
-            snapshot.TotalFilled += filled;
-
-        // Replenishment: new volume is within 10% of the original display size and there was execution
-        bool isReplenishment = mbo.Volume >= snapshot.OriginalVolume * 0.90m && filled > 0;
-
-        if (isReplenishment)
+        if (mbo.Volume > snapshot.CurrentVolume)
         {
+            // Volume increased = hidden reserve refilled the displayed portion (iceberg replenishment)
             snapshot.RefillCount++;
             snapshot.LastKnownDisplaySize = mbo.Volume;
+            snapshot.OriginalVolume = mbo.Volume;
+        }
+        else
+        {
+            // Volume decreased = normal fill execution
+            decimal filled = snapshot.CurrentVolume - mbo.Volume;
+            if (filled > 0)
+                snapshot.TotalFilled += filled;
         }
 
         snapshot.CurrentVolume = mbo.Volume;
@@ -107,7 +158,6 @@ public class IcebergTracker
 
         if (snapshot.RefillCount >= _minRefillCount && snapshot.TotalFilled >= _minIcebergVolume)
         {
-            Console.WriteLine($"Iceberg confirmed at price {mbo.Price}, refills {snapshot.RefillCount}");
             bool existed = _confirmed.ContainsKey(mbo.Price);
 
             _confirmed[mbo.Price] = new IcebergEvent
@@ -135,13 +185,31 @@ public class IcebergTracker
     {
         string orderId = mbo.ExchangeOrderId.ToString();
 
+        if (_activeOrders.TryRemove(orderId, out var snapshot))
+        {
+            // Record filled cycle at this price level for Delete+New detection
+            decimal filled = snapshot.TotalFilled + snapshot.CurrentVolume; // include any remainder as filled
+            if (filled > 0)
+            {
+                var cycle = _priceCycles.GetOrAdd(mbo.Price, _ => new PriceLevelCycles
+                {
+                    Side = snapshot.Side,
+                    CycleCount = 0,
+                    TotalFilled = 0,
+                    LastDisplaySize = snapshot.OriginalVolume,
+                    LastSeen = DateTime.Now,
+                    BarIndex = snapshot.BarIndex
+                });
+                cycle.TotalFilled += filled;
+                cycle.LastSeen = DateTime.Now;
+            }
+        }
+
         if (_confirmed.TryGetValue(mbo.Price, out var iceberg) && iceberg.OrderId == orderId)
         {
             iceberg.IsActive = false;
             RebuildSnapshot();
         }
-
-        _activeOrders.TryRemove(orderId, out _);
     }
 
     private void RebuildSnapshot()
@@ -165,6 +233,7 @@ public class IcebergTracker
     public void Cleanup(int expiryMinutes)
     {
         var cutoff = DateTime.Now.AddMinutes(-expiryMinutes);
+
         var expired = _confirmed
             .Where(kvp => !kvp.Value.IsActive && kvp.Value.LastSeen < cutoff)
             .Select(kvp => kvp.Key)
@@ -175,5 +244,13 @@ public class IcebergTracker
 
         if (expired.Count > 0)
             RebuildSnapshot();
+
+        var staleCycles = _priceCycles
+            .Where(kvp => (DateTime.Now - kvp.Value.LastSeen).TotalMinutes > expiryMinutes)
+            .Select(kvp => kvp.Key)
+            .ToList();
+
+        foreach (var key in staleCycles)
+            _priceCycles.TryRemove(key, out _);
     }
 }
