@@ -94,10 +94,13 @@ public class IcebergDetector : Indicator
     {
         _tracker = new IcebergTracker(MinRefillCount, MinIcebergVolume);
         _ = SubscribeMarketByOrderData();
+        this.LogInfo("IcebergDetector initialized, MBO subscription requested");
     }
 
     protected override void OnMarketByOrdersChanged(IEnumerable<MarketByOrder> orders)
     {
+        if (!_mboAvailable)
+            this.LogInfo("MBO data arrived — feed is active");
         _mboAvailable = true;
         bool newIcebergFound = false;
 
