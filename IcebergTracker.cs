@@ -124,7 +124,7 @@ public class IcebergTracker
         // Price-level: check if an order was recently deleted at this price (tracked or orphan)
         if (_recentDeletes.TryGetValue(mbo.Price, out var del)
             && del.Side == side
-            && (DateTime.Now - del.DeleteTime).TotalSeconds < 30)
+            && (DateTime.Now - del.DeleteTime).TotalSeconds < 5)
         {
             bool isOrphan = del.DisplaySize == 0;
             bool sizeOk = isOrphan || (mbo.Volume >= del.DisplaySize * 0.70m && mbo.Volume <= del.DisplaySize * 1.30m);
@@ -145,18 +145,26 @@ public class IcebergTracker
                     BarIndex = currentBar
                 });
 
-                lvl.CycleCount++;
-                lvl.TotalFilled += filledAmount;
-                lvl.LastSeen = DateTime.Now;
-                lvl.BarIndex = currentBar;
-                lvl.DisplaySize = mbo.Volume;
-                lvl.LastOrderId = orderId;
+                // Require size consistency with previous cycles (real icebergs show same display size)
+                bool sizeConsistent = lvl.CycleCount == 0
+                    || (mbo.Volume >= lvl.DisplaySize * 0.70m && mbo.Volume <= lvl.DisplaySize * 1.30m);
 
-                DiagPriceLevelRefillsSeen++;
-                if (lvl.CycleCount > DiagMaxRefillCount) DiagMaxRefillCount = lvl.CycleCount;
-                if (lvl.TotalFilled > DiagMaxTotalFilled) DiagMaxTotalFilled = lvl.TotalFilled;
+                if (!sizeConsistent) { DiagSizeRejected++; }
+                else
+                {
+                    lvl.CycleCount++;
+                    lvl.TotalFilled += filledAmount;
+                    lvl.LastSeen = DateTime.Now;
+                    lvl.BarIndex = currentBar;
+                    lvl.DisplaySize = mbo.Volume;
+                    lvl.LastOrderId = orderId;
 
-                return TryPromotePriceLevel(mbo.Price, lvl);
+                    DiagPriceLevelRefillsSeen++;
+                    if (lvl.CycleCount > DiagMaxRefillCount) DiagMaxRefillCount = lvl.CycleCount;
+                    if (lvl.TotalFilled > DiagMaxTotalFilled) DiagMaxTotalFilled = lvl.TotalFilled;
+
+                    return TryPromotePriceLevel(mbo.Price, lvl);
+                }
             }
         }
 
