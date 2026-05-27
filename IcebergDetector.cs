@@ -17,6 +17,12 @@ public class IcebergDetector : ExtendedIndicator
     private IcebergTracker _tracker = null!;
     private bool _mboAvailable = false;
 
+    public IcebergDetector()
+    {
+        EnableCustomDrawing = true;
+        SubscribeToDrawingEvents(DrawingLayouts.Final);
+    }
+
     // --- Detection ---
 
     private int _minRefillCount = 3;
