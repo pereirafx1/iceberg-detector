@@ -1,7 +1,7 @@
 using ATAS.Indicators;
 using ATAS.DataFeedsCore;
 using OFT.Rendering.Context;
-using OFT.Rendering.Settings;
+using OFT.Rendering.Tools;
 using System.ComponentModel;
 using System.ComponentModel.DataAnnotations;
 using System.Drawing;
@@ -83,11 +83,11 @@ public class IcebergDetector : ExtendedIndicator
     [Display(Name = "Alert on New Iceberg", GroupName = "Alerts", Order = 20)]
     public bool AlertOnDetection { get; set; } = false;
 
-    protected override void OnInitialize()
+    protected override async Task OnInitialize()
     {
         _tracker = new IcebergTracker(MinRefillCount, MinIcebergVolume);
 
-        _mboManager = SubscribeMarketByOrderData();
+        _mboManager = await SubscribeMarketByOrderData();
         if (_mboManager != null)
         {
             _mboAvailable = true;
@@ -99,11 +99,11 @@ public class IcebergDetector : ExtendedIndicator
         }
     }
 
-    private void HandleMboChanged(object? sender, MarketByOrdersChangedEventArgs e)
+    private void HandleMboChanged(IEnumerable<MarketByOrder> marketByOrders)
     {
         bool newIcebergFound = false;
 
-        foreach (var mbo in e.MarketByOrders)
+        foreach (var mbo in marketByOrders)
         {
             bool isNew = _tracker.ProcessMboUpdate(mbo, CurrentBar);
             if (isNew) newIcebergFound = true;
