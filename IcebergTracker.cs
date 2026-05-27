@@ -107,6 +107,7 @@ public class IcebergTracker
 
         if (snapshot.RefillCount >= _minRefillCount && snapshot.TotalFilled >= _minIcebergVolume)
         {
+            Console.WriteLine($"Iceberg confirmed at price {mbo.Price}, refills {snapshot.RefillCount}");
             bool existed = _confirmed.ContainsKey(mbo.Price);
 
             _confirmed[mbo.Price] = new IcebergEvent

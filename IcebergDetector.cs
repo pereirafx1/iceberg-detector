@@ -95,10 +95,12 @@ public class IcebergDetector : Indicator
         _tracker = new IcebergTracker(MinRefillCount, MinIcebergVolume);
         await SubscribeMarketByOrderData();
         _mboAvailable = true;
+        this.LogInfo("IcebergDetector initialized, MBO subscribed");
     }
 
     protected override void OnMarketByOrdersChanged(IEnumerable<MarketByOrder> orders)
     {
+        this.LogInfo($"MBO update received: {orders.Count()} orders");
         bool newIcebergFound = false;
 
         foreach (var mbo in orders)
@@ -124,6 +126,8 @@ public class IcebergDetector : Indicator
         if (layout != DrawingLayouts.Final) return;
         if (ChartInfo is null) return;
         if (!_mboAvailable) return;
+
+        this.LogInfo($"OnRender called, snapshot count: {_tracker.GetSnapshot().Count}");
 
         var snapshot = _tracker.GetSnapshot();
         if (snapshot.Count == 0) return;
