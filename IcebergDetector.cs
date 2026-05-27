@@ -125,7 +125,7 @@ public class IcebergDetector : Indicator
         {
             _currentPrice = value;
             _tracker.CurrentPrice = value;
-            _tracker.MaxDistance = (decimal)(InstrumentInfo?.TickSize ?? 0.25) * 2;
+            _tracker.MaxDistance = (InstrumentInfo?.TickSize ?? 0.25m) * 2;
             _tracker.Cleanup(ExpiryMinutes);
 
             if ((DateTime.Now - _lastDiagLog).TotalSeconds >= 30)
