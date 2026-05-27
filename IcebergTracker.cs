@@ -114,38 +114,43 @@ public class IcebergTracker
             BarIndex = currentBar
         };
 
-        // Price-level: check if a mostly-consumed order was recently deleted at this price
+        // Price-level: check if an order was recently deleted at this price (tracked or orphan)
         if (_recentDeletes.TryGetValue(mbo.Price, out var del)
             && del.Side == side
-            && (DateTime.Now - del.DeleteTime).TotalSeconds < 10)
+            && (DateTime.Now - del.DeleteTime).TotalSeconds < 30)
         {
-            bool sizeOk = mbo.Volume >= del.DisplaySize * 0.70m && mbo.Volume <= del.DisplaySize * 1.30m;
-            if (!sizeOk) DiagSizeRejected++;
-            _recentDeletes.TryRemove(mbo.Price, out _);
-
-            var lvl = _priceLevels.GetOrAdd(mbo.Price, _ => new PriceLevelState
+            bool isOrphan = del.DisplaySize == 0;
+            bool sizeOk = isOrphan || (mbo.Volume >= del.DisplaySize * 0.70m && mbo.Volume <= del.DisplaySize * 1.30m);
+            if (!sizeOk) { DiagSizeRejected++; }
+            else
             {
-                Side = side,
-                DisplaySize = del.DisplaySize,
-                CycleCount = 0,
-                TotalFilled = 0m,
-                FirstSeen = del.DeleteTime,
-                LastSeen = DateTime.Now,
-                BarIndex = del.BarIndex
-            });
+                _recentDeletes.TryRemove(mbo.Price, out _);
+                decimal filledAmount = isOrphan ? mbo.Volume : del.FilledAmount;
 
-            lvl.CycleCount++;
-            lvl.TotalFilled += del.FilledAmount;
-            lvl.LastSeen = DateTime.Now;
-            lvl.BarIndex = currentBar;
-            lvl.DisplaySize = mbo.Volume;
-            lvl.LastOrderId = orderId;
+                var lvl = _priceLevels.GetOrAdd(mbo.Price, _ => new PriceLevelState
+                {
+                    Side = side,
+                    DisplaySize = mbo.Volume,
+                    CycleCount = 0,
+                    TotalFilled = 0m,
+                    FirstSeen = del.DeleteTime,
+                    LastSeen = DateTime.Now,
+                    BarIndex = currentBar
+                });
 
-            DiagPriceLevelRefillsSeen++;
-            if (lvl.CycleCount > DiagMaxRefillCount) DiagMaxRefillCount = lvl.CycleCount;
-            if (lvl.TotalFilled > DiagMaxTotalFilled) DiagMaxTotalFilled = lvl.TotalFilled;
+                lvl.CycleCount++;
+                lvl.TotalFilled += filledAmount;
+                lvl.LastSeen = DateTime.Now;
+                lvl.BarIndex = currentBar;
+                lvl.DisplaySize = mbo.Volume;
+                lvl.LastOrderId = orderId;
 
-            return TryPromotePriceLevel(mbo.Price, lvl);
+                DiagPriceLevelRefillsSeen++;
+                if (lvl.CycleCount > DiagMaxRefillCount) DiagMaxRefillCount = lvl.CycleCount;
+                if (lvl.TotalFilled > DiagMaxTotalFilled) DiagMaxTotalFilled = lvl.TotalFilled;
+
+                return TryPromotePriceLevel(mbo.Price, lvl);
+            }
         }
 
         return false;
@@ -209,6 +214,17 @@ public class IcebergTracker
         else
         {
             DiagDeletesOrphan++;
+            // Include orphan deletes — order existed before subscription but may be an iceberg slice
+            // DisplaySize=0 signals unknown; fill will be estimated from the new order's volume
+            int orphanSide = mbo.Side == MarketDataType.Bid ? 0 : 1;
+            _recentDeletes[mbo.Price] = new DeleteRecord
+            {
+                Side = orphanSide,
+                DisplaySize = 0,
+                FilledAmount = 0,
+                DeleteTime = DateTime.Now,
+                BarIndex = 0
+            };
         }
 
         if (_confirmed.TryGetValue(mbo.Price, out var iceberg) && iceberg.OrderId == orderId)
