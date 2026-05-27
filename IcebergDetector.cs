@@ -17,7 +17,6 @@ public class IcebergDetector : Indicator
 {
     private IcebergTracker _tracker = null!;
     private bool _mboAvailable = false;
-    private IMarketByOrdersManager? _mboManager;
 
     public IcebergDetector()
     {
@@ -94,27 +93,12 @@ public class IcebergDetector : Indicator
     protected override void OnInitialize()
     {
         _tracker = new IcebergTracker(MinRefillCount, MinIcebergVolume);
-        _mboManager = SubscribeMarketByOrderData();
-        if (_mboManager != null)
-        {
-            _mboAvailable = true;
-            _mboManager.Changed += OnMboChanged;
-            this.LogInfo("MBO subscribed successfully");
-        }
-        else
-        {
-            this.LogInfo("MBO not available");
-        }
-    }
-
-    private void OnMboChanged(object? sender, EventArgs e)
-    {
-        this.LogInfo("MBO data received");
+        _ = SubscribeMarketByOrderData();
     }
 
     protected override void OnMarketByOrdersChanged(IEnumerable<MarketByOrder> orders)
     {
-        this.LogInfo($"MBO update received: {orders.Count()} orders");
+        _mboAvailable = true;
         bool newIcebergFound = false;
 
         foreach (var mbo in orders)
@@ -140,8 +124,6 @@ public class IcebergDetector : Indicator
         if (layout != DrawingLayouts.Final) return;
         if (ChartInfo is null) return;
         if (!_mboAvailable) return;
-
-        this.LogInfo($"OnRender called, snapshot count: {_tracker.GetSnapshot().Count}");
 
         var snapshot = _tracker.GetSnapshot();
         if (snapshot.Count == 0) return;
@@ -206,8 +188,6 @@ public class IcebergDetector : Indicator
 
     public override void Dispose()
     {
-        if (_mboManager != null)
-            _mboManager.Changed -= OnMboChanged;
         base.Dispose();
     }
 }
