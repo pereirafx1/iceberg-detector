@@ -94,13 +94,13 @@ public class IcebergDetector : Indicator
     {
         _tracker = new IcebergTracker(MinRefillCount, MinIcebergVolume);
         _ = SubscribeMarketByOrderData();
-        this.LogInfo("IcebergDetector initialized, MBO subscription requested");
+        this.LogWarn("IcebergDetector initialized, MBO subscription requested");
     }
 
     protected override void OnMarketByOrdersChanged(IEnumerable<MarketByOrder> orders)
     {
         if (!_mboAvailable)
-            this.LogInfo("MBO data arrived — feed is active");
+            this.LogWarn("MBO data arrived — feed is active");
         _mboAvailable = true;
         bool newIcebergFound = false;
 
@@ -118,6 +118,8 @@ public class IcebergDetector : Indicator
 
     protected override void OnCalculate(int bar, decimal value)
     {
+        if (bar == 0)
+            this.LogWarn("IcebergDetector OnCalculate running");
         if (bar == CurrentBar - 1)
             _tracker.Cleanup(ExpiryMinutes);
     }
