@@ -119,7 +119,7 @@ public class IcebergDetector : Indicator
     protected override void OnCalculate(int bar, decimal value)
     {
         if (bar == 0)
-            this.LogWarn($"IcebergDetector running | VolumeIncreases={_tracker.DiagVolumeIncreasesSeen} SameIdDeleteNew={_tracker.DiagSameIdDeleteNewSeen} MaxRefills={_tracker.DiagMaxRefillCount} MaxVol={_tracker.DiagMaxTotalFilled:F0}");
+            this.LogWarn($"IcebergDetector running | VolumeIncreases={_tracker.DiagVolumeIncreasesSeen} PriceLevelRefills={_tracker.DiagPriceLevelRefillsSeen} MaxRefills={_tracker.DiagMaxRefillCount} MaxVol={_tracker.DiagMaxTotalFilled:F0}");
         if (bar == CurrentBar - 1)
             _tracker.Cleanup(ExpiryMinutes);
     }
