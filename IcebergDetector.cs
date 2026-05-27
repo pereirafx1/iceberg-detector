@@ -121,13 +121,15 @@ public class IcebergDetector : Indicator
 
     protected override void OnRender(RenderContext context, DrawingLayouts layout)
     {
+        if (layout != DrawingLayouts.Final) return;
+        if (ChartInfo is null) return;
         if (!_mboAvailable) return;
 
         var snapshot = _tracker.GetSnapshot();
         if (snapshot.Count == 0) return;
 
         var font = new RenderFont("Arial", FontSize);
-        var barWidth = (int)ChartInfo.PriceChartContainer.BarsWidth;
+        int barWidth = ChartInfo.GetXByBar(1) - ChartInfo.GetXByBar(0);
 
         foreach (var iceberg in snapshot)
         {
@@ -137,10 +139,7 @@ public class IcebergDetector : Indicator
             var color = iceberg.Side == 0 ? BuyColor : SellColor;
             var borderColor = Color.FromArgb(255, color.R, color.G, color.B);
 
-            int bar = iceberg.BarIndex;
-            if (bar < FirstVisibleBarNumber || bar > LastVisibleBarNumber) continue;
-
-            int x = ChartInfo.GetXByBar(bar);
+            int x = ChartInfo.GetXByBar(iceberg.BarIndex);
             int y = ChartInfo.GetYByPrice(iceberg.Price);
             int halfH = LineHeight / 2;
 
