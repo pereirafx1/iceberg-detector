@@ -68,6 +68,7 @@ public class IcebergTracker
     }
 
     public decimal CurrentPrice;
+    public decimal MaxDistance;
 
     public IcebergTracker(int minRefillCount, decimal minIcebergVolume)
     {
@@ -80,8 +81,8 @@ public class IcebergTracker
         if (mbo.Side == MarketDataType.Trade || mbo.Price <= 0)
             return false;
 
-        // Ignore events too far from current price (deep book orders, not icebergs)
-        if (CurrentPrice > 0 && Math.Abs(mbo.Price - CurrentPrice) > CurrentPrice * 0.005m)
+        // Ignore orders more than 2 ticks from current price (deep book, not being executed)
+        if (CurrentPrice > 0 && MaxDistance > 0 && Math.Abs(mbo.Price - CurrentPrice) > MaxDistance)
             return false;
 
         switch (mbo.Type)
