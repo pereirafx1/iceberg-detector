@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using ATAS.DataFeedsCore;
+using MarketDataType = ATAS.DataFeedsCore.MarketDataType;
 
 namespace IcebergDetector;
 
@@ -20,6 +21,7 @@ public class IcebergTracker
         public int Side;
         public decimal OriginalVolume;
         public decimal CurrentVolume;
+        public decimal LastKnownDisplaySize;
         public int RefillCount;
         public decimal TotalFilled;
         public DateTime FirstSeen;
@@ -33,24 +35,23 @@ public class IcebergTracker
         _minIcebergVolume = minIcebergVolume;
     }
 
-    /// <summary>
-    /// Processes a single MBO update. Returns true if a new iceberg was confirmed.
-    /// </summary>
+    // Returns true if a new iceberg price level was confirmed for the first time.
     public bool ProcessMboUpdate(MarketByOrder mbo, int currentBar)
     {
         bool newIcebergConfirmed = false;
 
-        switch (mbo.UpdateType)
+        switch (mbo.Type)
         {
-            case MarketByOrderUpdateType.New:
+            case MarketByOrderUpdateTypes.New:
+            case MarketByOrderUpdateTypes.Snapshot:
                 HandleNew(mbo, currentBar);
                 break;
 
-            case MarketByOrderUpdateType.Change:
+            case MarketByOrderUpdateTypes.Change:
                 newIcebergConfirmed = HandleChange(mbo, currentBar);
                 break;
 
-            case MarketByOrderUpdateType.Delete:
+            case MarketByOrderUpdateTypes.Delete:
                 HandleDelete(mbo);
                 break;
         }
@@ -63,9 +64,10 @@ public class IcebergTracker
         var snapshot = new OrderSnapshot
         {
             Price = mbo.Price,
-            Side = mbo.OrderSide == OrderSide.Buy ? 0 : 1,
+            Side = mbo.Side == MarketDataType.Bid ? 0 : 1,
             OriginalVolume = mbo.Volume,
             CurrentVolume = mbo.Volume,
+            LastKnownDisplaySize = mbo.Volume,
             RefillCount = 0,
             TotalFilled = 0m,
             FirstSeen = DateTime.Now,
@@ -73,12 +75,14 @@ public class IcebergTracker
             BarIndex = currentBar
         };
 
-        _activeOrders[mbo.OrderId] = snapshot;
+        _activeOrders[mbo.ExchangeOrderId.ToString()] = snapshot;
     }
 
     private bool HandleChange(MarketByOrder mbo, int currentBar)
     {
-        if (!_activeOrders.TryGetValue(mbo.OrderId, out var snapshot))
+        string orderId = mbo.ExchangeOrderId.ToString();
+
+        if (!_activeOrders.TryGetValue(orderId, out var snapshot))
             return false;
 
         decimal filled = snapshot.CurrentVolume - mbo.Volume;
@@ -86,9 +90,8 @@ public class IcebergTracker
         if (filled > 0)
             snapshot.TotalFilled += filled;
 
-        // Replenishment: new volume is within 10% of the original display size
-        bool isReplenishment = mbo.Volume >= snapshot.OriginalVolume * 0.90m
-                               && filled > 0;
+        // Replenishment: new volume is within 10% of the original display size and there was execution
+        bool isReplenishment = mbo.Volume >= snapshot.OriginalVolume * 0.90m && filled > 0;
 
         if (isReplenishment)
         {
@@ -108,11 +111,11 @@ public class IcebergTracker
 
             _confirmed[mbo.Price] = new IcebergEvent
             {
-                OrderId = mbo.OrderId,
+                OrderId = orderId,
                 Price = snapshot.Price,
                 Side = snapshot.Side,
                 TotalFilledVolume = snapshot.TotalFilled,
-                LastKnownDisplaySize = snapshot.CurrentVolume,
+                LastKnownDisplaySize = snapshot.LastKnownDisplaySize,
                 RefillCount = snapshot.RefillCount,
                 FirstSeen = snapshot.FirstSeen,
                 LastSeen = snapshot.LastSeen,
@@ -129,13 +132,15 @@ public class IcebergTracker
 
     private void HandleDelete(MarketByOrder mbo)
     {
-        if (_confirmed.TryGetValue(mbo.Price, out var iceberg) && iceberg.OrderId == mbo.OrderId)
+        string orderId = mbo.ExchangeOrderId.ToString();
+
+        if (_confirmed.TryGetValue(mbo.Price, out var iceberg) && iceberg.OrderId == orderId)
         {
             iceberg.IsActive = false;
             RebuildSnapshot();
         }
 
-        _activeOrders.TryRemove(mbo.OrderId, out _);
+        _activeOrders.TryRemove(orderId, out _);
     }
 
     private void RebuildSnapshot()

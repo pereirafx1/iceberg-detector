@@ -2,9 +2,11 @@ using ATAS.Indicators;
 using ATAS.DataFeedsCore;
 using OFT.Rendering.Context;
 using OFT.Rendering.Tools;
+using Utils.Common.Logging;
 using System.ComponentModel;
 using System.ComponentModel.DataAnnotations;
 using System.Drawing;
+using Color = System.Drawing.Color;
 
 namespace IcebergDetector;
 
@@ -13,7 +15,6 @@ namespace IcebergDetector;
 [Description("Detects hidden iceberg orders in real-time using MBO data feed (requires Rithmic)")]
 public class IcebergDetector : ExtendedIndicator
 {
-    private IMarketByOrdersManager? _mboManager;
     private IcebergTracker _tracker = null!;
     private bool _mboAvailable = false;
 
@@ -89,34 +90,25 @@ public class IcebergDetector : ExtendedIndicator
     [Display(Name = "Alert on New Iceberg", GroupName = "Alerts", Order = 20)]
     public bool AlertOnDetection { get; set; } = false;
 
-    protected override void OnInitialize()
+    protected override async void OnInitialize()
     {
         _tracker = new IcebergTracker(MinRefillCount, MinIcebergVolume);
-
-        _mboManager = SubscribeMarketByOrderData();
-        if (_mboManager != null)
-        {
-            _mboAvailable = true;
-            _mboManager.Changed += HandleMboChanged;
-        }
-        else
-        {
-            AddWarning("MBO data not available. Connect via Rithmic to enable Iceberg Detection.");
-        }
+        await SubscribeMarketByOrderData();
+        _mboAvailable = true;
     }
 
-    private void HandleMboChanged(IEnumerable<MarketByOrder> marketByOrders)
+    protected override void OnMarketByOrdersChanged(IEnumerable<MarketByOrder> orders)
     {
         bool newIcebergFound = false;
 
-        foreach (var mbo in marketByOrders)
+        foreach (var mbo in orders)
         {
             bool isNew = _tracker.ProcessMboUpdate(mbo, CurrentBar);
             if (isNew) newIcebergFound = true;
         }
 
         if (newIcebergFound && AlertOnDetection)
-            AddAlert("New iceberg order detected!");
+            this.LogInfo("New iceberg order detected!");
 
         RedrawChart();
     }
@@ -152,7 +144,7 @@ public class IcebergDetector : ExtendedIndicator
             int y = ChartInfo.GetYByPrice(iceberg.Price);
             int halfH = LineHeight / 2;
 
-            // Horizontal line at the iceberg price level (3-bar width)
+            // Horizontal bar at the iceberg price level (3-bar width)
             var lineRect = new Rectangle(x - barWidth, y - halfH, barWidth * 3, LineHeight);
             context.FillRectangle(color, lineRect);
             context.DrawRectangle(new RenderPen(borderColor, 1), lineRect);
@@ -189,15 +181,14 @@ public class IcebergDetector : ExtendedIndicator
                     labelParts.Add($"R:{iceberg.RefillCount}");
 
                 string label = string.Join(" ", labelParts);
-                context.DrawString(label, font, borderColor, new Point(x + 8, y - FontSize / 2));
+                var labelRect = new Rectangle(x + 8, y - FontSize / 2, 200, FontSize + 4);
+                context.DrawString(label, font, borderColor, labelRect);
             }
         }
     }
 
     public override void Dispose()
     {
-        if (_mboManager != null)
-            _mboManager.Changed -= HandleMboChanged;
         base.Dispose();
     }
 }
